@@ -1,5 +1,5 @@
 //
-//  File: %dev-serial.c
+//  File: %serial-windows.c
 //  Summary: "Device: Serial port access for Windows"
 //  Project: "Rebol 3 Interpreter and Run-time (Ren-C branch)"
 //  Homepage: https://github.com/metaeducation/ren-c/
@@ -20,29 +20,19 @@
 //
 //=////////////////////////////////////////////////////////////////////////=//
 //
-// !!! The serial port code was derived from code originally by Carl
-// Sassenrath and used for home automation:
+// This code is being kept compiling, but does not work at present.
 //
-// https://www.youtube.com/watch?v=Axus6jF6YOQ
-//
-// It was added to R3-Alpha by Joshua Shireman, and incorporated into the
-// Ren-C branch when it was launched.  Due to the fact that few developers
-// have serial interfaces on their current machines (or serial devices to
-// use them with), it has had limited testing--despite needing continuous
-// modification to stay in sync with core changes.
-//
-// (At one point it was known to be broken due to variances in handling of
-// character widths on Windows vs. UNIX, but the "UTF-8 Everywhere" initiative
-// should help with that.)
+// See README.md for notes about this extension.
 //
 
 #define WIN32_LEAN_AND_MEAN  // trim down the Win32 headers
 #include <windows.h>
-#undef IS_ERROR // windows defines this, different meaning from %sys-core.h
+#undef VOID  // used for better purpose
+#undef OUT  // used for better purpose
 
 #include <assert.h>
 
-#include "sys-core.h" // for CTX_ARCHETYPE(), temporary
+#include "sys-core.h"
 
 #include "req-serial.h"
 
@@ -68,37 +58,45 @@ const int speeds[] = {
 
 
 //
-//  Open_Serial: C
+//  Get_Serial_Max_Baud_Rate: C
 //
-// serial.path = the /dev name for the serial port
-// serial.baud = speed (baudrate)
+SerialBaudRate Get_Serial_Max_Baud_Rate(void) {
+    int max = 0;
+    for (int n = 0; speeds[n] != 0; n += 2)
+        max = speeds[n];
+    return max;
+}
+
+
 //
-DEVICE_CMD Open_Serial(REBREQ *serial)
+//  Trap_Open_Serial: C
+//
+// !!! This doesn't seem to heed serial->flow_control or serial->data_bits.
+//
+// 1. serial->path should be prefixed with "\\.\" to allow for higher COM
+//    port numbers
+//
+// 2. !!! Comment said "add in timeouts? currently unused".  This may suggest
+//    a question of whether the request itself have some way of asking for
+//    custom timeouts, while the initialization of the timeouts below is the
+//    same for every request.
+//
+//    http://msdn.microsoft.com/en-us/library/windows/desktop/aa363190%28v=vs.85%29.aspx
+//
+Option(Error*) Trap_Open_Serial(SerialConnection* serial)
 {
-    struct rebol_devreq *req = Req(serial);
+    assert(serial->path != nullptr);
 
-    // req->special.serial.path should be prefixed with "\\.\" to allow for
-    // higher com port numbers
-    //
-    WCHAR fullpath[MAX_SERIAL_DEV_PATH] = L"\\\\.\\";
+    WCHAR fullpath[MAX_SERIAL_DEV_PATH] = L"\\\\.\\";  // high port nums [1]
 
-    assert(ReqSerial(serial)->path != NULL);
-
-    // Concatenate the "spelling" of the serial port request by asking it
-    // to be placed at the end of the buffer.
-    //
-    REBLEN buf_left = MAX_SERIAL_DEV_PATH - wcslen(fullpath) - 1;
-    REBLEN chars_appended = rebSpellIntoWideQ(
-        &fullpath[wcslen(fullpath)],
-        buf_left, // space, minus terminator
-        ReqSerial(serial)->path,
-        rebEND
+    Length buf_left = MAX_SERIAL_DEV_PATH - wcslen(fullpath) - 1;
+    Length chars_appended = rebSpellIntoWide(
+        &fullpath[wcslen(fullpath)],  // concatenate to end of buffer
+        buf_left,  // space, minus terminator
+        serial->path
     );
     if (chars_appended > buf_left)
-        rebJumps(
-            "fail {Serial path too long for MAX_SERIAL_DEV_PATH}",
-            rebEND
-        );
+        return Error_User("Serial path too long for MAX_SERIAL_DEV_PATH}");
 
     HANDLE h = CreateFile(
         fullpath,
@@ -110,7 +108,7 @@ DEVICE_CMD Open_Serial(REBREQ *serial)
         NULL
     );
     if (h == INVALID_HANDLE_VALUE)
-        rebFail_OS (GetLastError());
+        return Error_OS(GetLastError());
 
     DCB dcbSerialParams;
     memset(&dcbSerialParams, '\0', sizeof(dcbSerialParams));
@@ -118,220 +116,153 @@ DEVICE_CMD Open_Serial(REBREQ *serial)
 
     if (not GetCommState(h, &dcbSerialParams)) {
         CloseHandle(h);
-        rebFail_OS (GetLastError());
+        return Error_OS(GetLastError());
     }
 
-    int speed = ReqSerial(serial)->baud;
+    for (Offset n = 0; true; n += 2) {
+        if (speeds[n] == 0)  // invalid (used default CBR_115200 before)
+            return Error_User("Invalid baud rate");
 
-    REBINT n;
-    for (n = 0; speeds[n]; n += 2) {
-        if (speed == speeds[n]) {
+        if (serial->baud_rate == speeds[n]) {
             dcbSerialParams.BaudRate = speeds[n+1];
             break;
         }
     }
 
-    if (speeds[n] == 0) // invalid, use default
-        dcbSerialParams.BaudRate = CBR_115200;
-
-    dcbSerialParams.ByteSize = ReqSerial(serial)->data_bits;
-    if (ReqSerial(serial)->stop_bits == 1)
+    dcbSerialParams.ByteSize = serial->data_bits;
+    if (serial->stop_bits == 1) {
+      stop_bits_1_case:
         dcbSerialParams.StopBits = ONESTOPBIT;
-    else
+    }
+    else if (serial->stop_bits == 2)
         dcbSerialParams.StopBits = TWOSTOPBITS;
+    else {
+        assert(false);
+        goto stop_bits_1_case;
+    }
 
-    switch (ReqSerial(serial)->parity) {
-    case SERIAL_PARITY_ODD:
+    switch (serial->parity) {
+      parity_none_case:
+      case SERIAL_PARITY_NONE:
+        dcbSerialParams.Parity = NOPARITY;
+        break;
+
+      case SERIAL_PARITY_ODD:
         dcbSerialParams.Parity = ODDPARITY;
         break;
 
-    case SERIAL_PARITY_EVEN:
+      case SERIAL_PARITY_EVEN:
         dcbSerialParams.Parity = EVENPARITY;
         break;
 
-    case SERIAL_PARITY_NONE:
-    default:
-        dcbSerialParams.Parity = NOPARITY;
-        break;
+      default:
+        assert(false);
+        goto parity_none_case;
     }
 
     if (not SetCommState(h, &dcbSerialParams)) {
         CloseHandle(h);
-        rebFail_OS (GetLastError());
+        return Error_OS(GetLastError());
     }
 
-    // Make sure buffers are clean
-
-    if (not PurgeComm(h, PURGE_RXCLEAR | PURGE_TXCLEAR)) {
+    if (not PurgeComm(h, PURGE_RXCLEAR | PURGE_TXCLEAR)) {  // clean buffers
         CloseHandle(h);
-        rebFail_OS (GetLastError());
+        return Error_OS(GetLastError());
     }
 
-    // !!! Comment said "add in timeouts? currently unused".  This might
-    // suggest a question of whether the request itself have some way of
-    // asking for custom timeouts, while the initialization of the timeouts
-    // below is the same for every request.
-    //
-    // http://msdn.microsoft.com/en-us/library/windows/desktop/aa363190%28v=vs.85%29.aspx
-    //
-    COMMTIMEOUTS timeouts;
+    COMMTIMEOUTS timeouts;  // comment "add in timeouts? currently unused" [2]
     memset(&timeouts, '\0', sizeof(timeouts));
     timeouts.ReadIntervalTimeout = MAXDWORD;
     timeouts.ReadTotalTimeoutMultiplier = 0;
     timeouts.ReadTotalTimeoutConstant = 0;
-    timeouts.WriteTotalTimeoutMultiplier = 1; // !!! should this be 0?
-    timeouts.WriteTotalTimeoutConstant = 1; // !!! should this be 0?
+    timeouts.WriteTotalTimeoutMultiplier = 1;  // !!! should this be 0?
+    timeouts.WriteTotalTimeoutConstant = 1;  // !!! should this be 0?
 
     if (not SetCommTimeouts(h, &timeouts)) {
         CloseHandle(h);
-        rebFail_OS (GetLastError());
+        return Error_OS(GetLastError());
     }
 
-    req->requestee.handle = h;
-    return DR_DONE;
+    serial->handle = h;
+    return nullptr;  // no error
 }
 
 
 //
-//  Close_Serial: C
+//  Trap_Close_Serial: C
 //
-DEVICE_CMD Close_Serial(REBREQ *serial)
+Option(Error*) Trap_Close_Serial(SerialConnection* serial)
 {
-    struct rebol_devreq *req = Req(serial);
+    assert(serial->handle != nullptr);
 
-    if (req->requestee.handle != NULL) {
-        //
-        // !!! Should we free req->special.serial.prior_attr termios struct?
-        //
-        CloseHandle(req->requestee.handle);
-        req->requestee.handle = NULL;
-    }
-    return DR_DONE;
+    if (not CloseHandle(serial->handle))
+        return Error_OS(GetLastError());
+
+    return nullptr;  // no error
 }
 
 
 //
-//  Read_Serial: C
+//  Trap_Read_Serial: C
 //
-DEVICE_CMD Read_Serial(REBREQ *serial)
+Option(Error*) Trap_Read_Serial(SerialConnection* serial)
 {
-    struct rebol_devreq *req = Req(serial);
+    assert(serial->handle != nullptr);
 
-    assert(req->requestee.handle != NULL);
-
-    //printf("reading %d bytes\n", req->length);
+  #if DEBUG_SERIAL_EXTENSION
+    printf("reading %d bytes\n", serial->length);
+  #endif
 
     DWORD result;
+    LPOVERLAPPED overlapped = nullptr;
     if (not ReadFile(
-        req->requestee.handle, req->common.data, req->length, &result, 0
+        serial->handle, serial->data, serial->length, &result, overlapped
     )){
-        rebFail_OS (GetLastError());
+        return Error_OS(GetLastError());
     }
 
     if (result == 0)
-        return DR_PEND;
+        fail ("The original implementation queued PENDING here");
 
-    req->actual = result;
+    serial->actual = result;
 
-    rebElide(
-        "insert system/ports/system make event! [",
-            "type: 'read",
-            "port:", CTX_ARCHETYPE(MISC(ReqPortCtx, serial)),
-        "]",
-    rebEND);
+  #if DEBUG_SERIAL_EXTENSION
+    printf("read %d ret: %d\n", serial->length, serial->actual);
+  #endif
 
-#ifdef DEBUG_SERIAL
-    printf("read %d ret: %d\n", req->length, req->actual);
-#endif
-
-    return DR_DONE;
+    fail ("The original implementation posted a WAS-READ event here");
 }
 
 
 //
-//  Write_Serial: C
+//  Trap_Write_Serial: C
 //
-DEVICE_CMD Write_Serial(REBREQ *serial)
+Option(Error*) Trap_Write_Serial(SerialConnection* serial)
 {
-    struct rebol_devreq *req = Req(serial);
+    assert(serial->handle != nullptr);
 
-    DWORD len = req->length - req->actual;
-
-    assert(req->requestee.handle != NULL);
+    Size len = serial->length - serial->actual;
 
     if (len <= 0)
-        return DR_DONE;
+        fail ("The original implementation returned DONE here");
 
     DWORD result;
+    LPOVERLAPPED overlapped = nullptr;
     if (not WriteFile(
-        req->requestee.handle, req->common.data, len, &result, NULL
+        serial->handle, serial->data, len, &result, overlapped
     )){
         rebFail_OS (GetLastError());
     }
 
-#ifdef DEBUG_SERIAL
-    printf("write %d ret: %d\n", req->length, req->actual);
-#endif
+  #if DEBUG_SERIAL_EXTENSION
+    printf("write %d ret: %d\n", serial->length, serial->actual);
+  #endif
 
-    req->actual += result;
-    req->common.data += result;
-    if (req->actual >= req->length) {
-        rebElide(
-            "insert system/ports/system make event! [",
-                "type: 'wrote",
-                "port:", CTX_ARCHETYPE(MISC(ReqPortCtx, serial)),
-            "]",
-        rebEND);
+    serial->actual += result;
+    serial->data += result;
 
-        return DR_DONE;
-    }
+    if (serial->actual >= serial->length)
+        fail ("The original implementation posted a WAS-WRITTEN event here");
 
-    req->flags |= RRF_ACTIVE; // notify OS_WAIT of activity
-    return DR_PEND;
+    fail ("The original implementation queued PENDING here");
 }
-
-
-//
-//  Query_Serial: C
-//
-DEVICE_CMD Query_Serial(REBREQ *req)
-{
-#ifdef QUERY_IMPLEMENTED
-    struct pollfd pfd;
-
-    if (req->requestee.handle) {
-        pfd.fd = req->requestee.handle;
-        pfd.events = POLLIN;
-        n = poll(&pfd, 1, 0);
-    }
-#else
-    UNUSED(req);
-#endif
-    return DR_DONE;
-}
-
-
-/***********************************************************************
-**
-**  Command Dispatch Table (RDC_ enum order)
-**
-***********************************************************************/
-
-static DEVICE_CMD_CFUNC Dev_Cmds[RDC_MAX] = {
-    0,
-    0,
-    Open_Serial,
-    Close_Serial,
-    Read_Serial,
-    Write_Serial,
-    0,  // connect
-    Query_Serial,
-    0,  // create
-    0,  // delete
-    0   // rename
-};
-
-DEFINE_DEV(
-    Dev_Serial,
-    "Serial IO", 1, Dev_Cmds, RDC_MAX, sizeof(struct devreq_serial)
-);

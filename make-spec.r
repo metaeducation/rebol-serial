@@ -1,19 +1,18 @@
-REBOL []
-
-name: 'Serial
-source: %serial/mod-serial.c
-includes: [
-    %prep/extensions/serial
+REBOL [
+    Name: Serial
+    Notes: "See %extensions/README.md for the format and fields of this file"
 ]
+
+use-librebol: 'no
+
+sources: %mod-serial.c
 
 depends: compose [
-    (switch system-config/os-base [
+    (switch platform-config.os-base [
         'Windows [
-            [%serial/serial-windows.c]
+            [%serial-windows.c]
         ]
     ] else [
-        [%serial/serial-posix.c]
+        [%serial-posix.c]
     ])
 ]
-
-

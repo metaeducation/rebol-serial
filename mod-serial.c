@@ -21,8 +21,18 @@
 //
 //=////////////////////////////////////////////////////////////////////////=//
 //
-
-#include "sys-core.h"
+// This code is being kept compiling, but does not work at present.
+//
+// See README.md for notes about this extension.
+//
+//=//// NOTES /////////////////////////////////////////////////////////////=//
+//
+// A. This code was originally written to use EVENT! and the R3-Alpha device
+//    model.  Ren-C ripped this out and replaced it with libuv.  However, at
+//    time of writing the libuv event loop has not been exposed, e.g. by
+//    a LIBUV-LOOP! type.  Until that is done, this code is just being kept
+//    in a compiling state, with the hope of plugging into that someday.
+//
 
 #include "tmp-mod-serial.h"
 
@@ -31,243 +41,201 @@
 #define MAX_SERIAL_DEV_PATH 128
 
 //
-//  Serial_Actor: C
+//  export serial-actor: native [
 //
-static REB_R Serial_Actor(REBFRM *frame_, REBVAL *port, const REBVAL *verb)
+//  "Handler for OLDGENERIC dispatch on Serial PORT!s"
+//
+//      return: [any-value?]
+//  ]
+//
+DECLARE_NATIVE(SERIAL_ACTOR)
 {
-    FAIL_IF_BAD_PORT(port);
+    Value* port = ARG_N(1);
+    const Symbol* verb = Level_Verb(LEVEL);
 
-    REBCTX *ctx = VAL_CONTEXT(port);
-    REBVAL *spec = CTX_VAR(ctx, STD_PORT_SPEC);
-    REBVAL *path = Obj_Value(spec, STD_PORT_SPEC_HEAD_REF);
-    if (path == NULL)
-        fail (Error_Invalid_Spec_Raw(spec));
+    VarList* ctx = Cell_Varlist(port);
+    Value* spec = Varlist_Slot(ctx, STD_PORT_SPEC);
 
-    REBREQ *serial = Force_Get_Port_State(port, &Dev_Serial);
-    struct rebol_devreq *req = Req(serial);
+    Value* path = Obj_Value(spec, STD_PORT_SPEC_HEAD_REF);
+    if (not Is_File(path))
+        return FAIL(Error_Invalid_Spec_Raw(spec));
 
-    // Actions for an unopened serial port:
-    if (not (req->flags & RRF_OPEN)) {
-        switch (VAL_WORD_ID(verb)) {
-          case SYM_REFLECT: {
-            INCLUDE_PARAMS_OF_REFLECT;
+    Value* state = Varlist_Slot(ctx, STD_PORT_STATE);
+    SerialConnection* serial = nullptr;  // in theory get from state...
+    UNUSED(state);  // (SERIAL-RS232! will likely be its own datatype...)
 
-            UNUSED(ARG(value));
-            SYMID property = VAL_WORD_ID(ARG(property));
-            assert(property != SYM_0);
+  //=//// ACTIONS FOR UNOPENED SERIAL PORT ////////////////////////////////=//
 
-            switch (property) {
-              case SYM_OPEN_Q:
-                return Init_False(D_OUT);
+    if (serial->handle == nullptr) {
+        switch (Symbol_Id(verb)) {
+          case SYM_OPEN_Q:
+            return Init_False(OUT);
 
-              default:
-                break; }
+          case SYM_OPEN: {
+            serial->path = rebValue(
+                "try match [file! text!] pick", spec, "'serial-path"
+            );  // !!! handle needs release somewhere...
+            if (not serial->path)
+                return "fail -{SERIAL-PATH must be FILE! or TEXT!}-";
 
-            fail (Error_On_Port(SYM_NOT_OPEN, port, -12)); }
+            SerialBaudRate max_baud_rate = Get_Serial_Max_Baud_Rate();
+            int baud_rate = rebUnboxInteger("any [",
+                "try match integer pick", spec, "'serial-speed",
+                "0"
+            "]");
+            if (baud_rate <= 0 or baud_rate > max_baud_rate)
+                return rebDelegate("fail [",
+                    "SERIAL-SPEED must be nonzero INTEGER!",
+                    "up to", rebI(max_baud_rate),
+                "]");
+            serial->baud_rate = cast(SerialBaudRate, baud_rate);
 
-        case SYM_OPEN: {
-            // !!! Note: GROUP! should not be necessary around MATCH:
-            //
-            // https://github.com/metaeducation/ren-c/issues/820
+            serial->data_bits = rebUnboxInteger("any [",
+                "try match integer! pick", spec, "'serial-data-size"
+                "0"
+            "]");
+            if (serial->data_bits < 5 or serial->data_bits > 8)
+                return "fail -{DATA-SIZE must be INTEGER [5 .. 8]}-";
 
-            ReqSerial(serial)->path = rebValue("use [path] ["
-                "path: try pick", spec, "'serial-path",
-                "match [file! text! binary!] path else [",
-                    "fail [{Invalid SERIAL-PATH} path]",
-                "] ]", rebEND);  // !!! handle needs release somewhere...
+            serial->stop_bits = rebUnboxInteger(
+                "try match integer! pick", spec, "'serial-stop-bits"
+            );
+            if (serial->stop_bits != 1 and serial->stop_bits != 2)
+                return "fail -{STOP-BITS must be INTEGER [1 or 2]}-";
 
-            ReqSerial(serial)->baud = rebUnbox("use [speed] [",
-                "speed: try pick", spec, "'serial-speed",
-                "match integer! speed else [",
-                    "fail [{Invalid SERIAL-SPEED} speed]",
-                "] ]", rebEND);
+            int parity = rebUnboxInteger(
+                "switch try pick", spec, "'serial-parity [",
+                    " 'none [", rebI(SERIAL_PARITY_NONE), "]",
+                    " 'odd [", rebI(SERIAL_PARITY_ODD), "]",
+                    " 'even [", rebI(SERIAL_PARITY_EVEN), "]",
+                "] else [-1]"
+            );
+            if (parity == -1)
+                return "fail -{PARITY must be NONE/ODD/EVEN}-";
+            serial->parity = cast(SerialParity, parity);
 
-            ReqSerial(serial)->data_bits = rebUnbox("use [size] [",
-                "size: try pick", spec, "'serial-data-size",
-                "all [integer? size | size >= 5 | size <= 8 | size] else [",
-                    "fail [{SERIAL-DATA-SIZE is [5..8], not} size]",
-                "] ]", rebEND);
+            int flow_control = rebUnboxInteger(
+                "switch try pick", spec, "'serial-flow-control [",
+                    "'none [", rebI(SERIAL_FLOW_CONTROL_NONE), "]",
+                    "'hardware [", rebI(SERIAL_FLOW_CONTROL_HARDWARE), "]",
+                    "'software [", rebI(SERIAL_FLOW_CONTROL_SOFTWARE), "]",
+                "] else [-1]"
+            );
+            if (flow_control == -1)
+                return ("fail -{FLOW-CONTROL must be NONE/HARDWARE/SOFTWARE}-");
+            serial->flow_control = cast(SerialFlowControl, flow_control);
 
-            ReqSerial(serial)->stop_bits = rebUnbox("use [stop] [",
-                "stop: try pick", spec, "'serial-stop-bits",
-                "first <- find [1 2] stop else [",
-                    "fail [{SERIAL-STOP-BITS should be 1 or 2, not} stop]",
-                "] ]", rebEND);
+            Option(Error*) e = Trap_Open_Serial(serial);
+            if (e)
+                return unwrap e;
 
-            ReqSerial(serial)->parity = rebUnbox("use [parity] [",
-                "parity: try pick", spec, "'serial-parity",
-                "switch parity [",
-                    "_ [", rebI(SERIAL_PARITY_NONE), "]",
-                    "'odd [", rebI(SERIAL_PARITY_ODD), "]",
-                    "'even [", rebI(SERIAL_PARITY_EVEN), "]",
-                "] else [",
-                    "fail [{SERIAL-PARITY should be ODD/EVEN, not} parity]",
-                "] ]", rebEND);
-
-            ReqSerial(serial)->flow_control = rebUnbox("use [flow] [",
-                "flow: try pick", spec, "'serial-flow-control",
-                "switch flow [",
-                    "_ [", rebI(SERIAL_FLOW_CONTROL_NONE), "]",
-                    "'hardware", rebI(SERIAL_FLOW_CONTROL_HARDWARE), "]",
-                    "'software", rebI(SERIAL_FLOW_CONTROL_SOFTWARE), "]",
-                "] else [",
-                    "fail [",
-                        "{SERIAL-FLOW-CONTROL should be HARDWARE/SOFTWARE,}",
-                        "{not} flow",
-                    "]",
-                "] ]", rebEND);
-
-            OS_DO_DEVICE_SYNC(serial, RDC_OPEN);
-
-            req->flags |= RRF_OPEN;
-            RETURN (port); }
+            return COPY(port); }
 
           case SYM_CLOSE:
-            RETURN (port);
+            return COPY(port);
 
           default:
-            fail (Error_On_Port(SYM_NOT_OPEN, port, -12));
+            return FAIL(Error_On_Port(SYM_NOT_OPEN, port, -12));
         }
     }
 
-    // Actions for an open socket:
+  //=//// ACTIONS FOR AN OPEN SERIAL PORT /////////////////////////////////=//
 
-    switch (VAL_WORD_ID(verb)) {
-      case SYM_REFLECT: {
-        INCLUDE_PARAMS_OF_REFLECT;
-
-        UNUSED(ARG(value));
-        SYMID property = VAL_WORD_ID(ARG(property));
-        assert(property != SYM_0);
-
-        switch (property) {
-          case SYM_OPEN_Q:
-            return Init_True(D_OUT);
-
-          default:
-            break;
-        }
-
-        break; }
+    switch (Symbol_Id(verb)) {
+      case SYM_OPEN_Q:
+        return Init_True(OUT);
 
       case SYM_READ: {
         INCLUDE_PARAMS_OF_READ;
 
-        UNUSED(PAR(source));
+        UNUSED(PARAM(SOURCE));
 
-        if (REF(part) or REF(seek))
+        if (Bool_ARG(PART) or Bool_ARG(SEEK))
             fail (Error_Bad_Refines_Raw());
 
-        UNUSED(PAR(string)); // handled in dispatcher
-        UNUSED(PAR(lines)); // handled in dispatcher
+        UNUSED(PARAM(STRING));  // handled in dispatcher
+        UNUSED(PARAM(LINES));  // handled in dispatcher
 
         // Setup the read buffer (allocate a buffer if needed):
-        REBVAL *data = CTX_VAR(ctx, STD_PORT_DATA);
-        if (!IS_BINARY(data))
-            Init_Binary(data, Make_Binary(32000));
+        Value* data = Varlist_Slot(ctx, STD_PORT_DATA);
+        if (not Is_Blob(data))
+            Init_Blob(data, Make_Binary(32000));
 
-        REBBIN *ser = VAL_BINARY_KNOWN_MUTABLE(data);
-        req->length = SER_AVAIL(ser); // space available
-        if (req->length < 32000 / 2)
-            Extend_Series(ser, 32000);
-        req->length = SER_AVAIL(ser);
+        Binary* bin = Cell_Binary_Known_Mutable(data);
+        serial->length = Flex_Available_Space(bin);
+        if (serial->length < 32000 / 2)
+            Extend_Flex_If_Necessary(bin, 32000);
 
-        req->common.data = BIN_TAIL(ser); // write at tail
+        serial->length = Flex_Available_Space(bin);
+        serial->data = Binary_Tail(bin);  // write at tail
+        serial->actual = 0;  // Actual for THIS read, not for total.
 
-        req->actual = 0; // Actual for THIS read, not for total.
-
-      #ifdef DEBUG_SERIAL
-        printf("(max read length %d)", req->length);
+      #if DEBUG_SERIAL_EXTENSION
+        printf("(max read length %d)", serial->length);
       #endif
 
-        // "recv can happen immediately"
-        //
-        OS_DO_DEVICE_SYNC(serial, RDC_READ);
+        Option(Error*) e = Trap_Read_Serial(serial);  // can recv immediately
+        if (e)
+            return unwrap e;
 
-      #ifdef DEBUG_SERIAL
-        for (len = 0; len < req->actual; len++) {
+        // !!! Incomplete reads need event loop interop, see [A] above
+
+      #if DEBUG_SERIAL_EXTENSION
+        for (len = 0; len < serial->actual; len++) {
             if (len % 16 == 0) printf("\n");
-            printf("%02x ", req->common.data[len]);
+            printf("%02x ", serial->data[len]);
         }
         printf("\n");
       #endif
-        RETURN (port); }
+
+        return COPY(port); }
 
       case SYM_WRITE: {
         INCLUDE_PARAMS_OF_WRITE;
 
-        UNUSED(PAR(destination));
+        UNUSED(PARAM(DESTINATION));
 
-        if (REF(seek) or REF(append) or REF(allow) or REF(lines))
-            fail (Error_Bad_Refines_Raw());
+        if (Bool_ARG(SEEK) or Bool_ARG(APPEND) or Bool_ARG(LINES))
+            return FAIL(Error_Bad_Refines_Raw());
 
-        // Determine length. Clip /PART to size of binary if needed.
+        // Determine length. Clip :PART to size of BLOB! if needed.
 
-        REBVAL *data = ARG(data);
-        REBLEN len = VAL_LEN_AT(data);
-        if (REF(part)) {
-            REBLEN n = Int32s(ARG(part), 0);
+        Element* data = Element_ARG(DATA);
+        Length len = Cell_Series_Len_At(data);
+        if (Bool_ARG(PART)) {
+            REBLEN n = Int32s(ARG(PART), 0);
             if (n <= len)
                 len = n;
         }
 
-        Copy_Cell(CTX_VAR(ctx, STD_PORT_DATA), data); // keep it GC safe
-        req->length = len;
-        req->common.data = VAL_BINARY_AT_KNOWN_MUTABLE(data);
-        req->actual = 0;
+        Copy_Cell(Varlist_Slot(ctx, STD_PORT_DATA), data);  // keep it GC safe
+        serial->length = len;
+        serial->data = Cell_Blob_At_Known_Mutable(data);
+        serial->actual = 0;
 
         // "send can happen immediately"
         //
-        OS_DO_DEVICE_SYNC(serial, RDC_WRITE);
+        Option(Error*) e = Trap_Write_Serial(serial);  // can send immediately
+        if (e)
+            return unwrap e;
 
-        RETURN (port); }
+        // !!! Incomplete reads need event loop interop, see [A] above
 
-      case SYM_ON_WAKE_UP: {
-        // Update the port object after a READ or WRITE operation.
-        // This is normally called by the WAKE-UP function.
-
-        REBVAL *data = CTX_VAR(ctx, STD_PORT_DATA);
-        if (req->command == RDC_READ) {
-            if (IS_BINARY(data)) {
-                SET_SERIES_LEN(
-                    VAL_SERIES_KNOWN_MUTABLE(data),
-                    VAL_LEN_HEAD(data) + req->actual
-                );
-            }
-        }
-        else if (req->command == RDC_WRITE) {
-            Init_Blank(data);  // Write is done.
-        }
-        return Init_Void(D_OUT, SYM_VOID); }
+        return COPY(port); }
 
       case SYM_CLOSE:
-        if (req->flags & RRF_OPEN) {
-            OS_DO_DEVICE_SYNC(serial, RDC_CLOSE);
+        if (serial->handle != nullptr) {  // !!! tolerate double closes?
+            Option(Error*) e = Trap_Close_Serial(serial);
+            if (e)
+                return unwrap e;
 
-            req->flags &= ~RRF_OPEN;
+            assert(serial->handle == nullptr);
         }
-        RETURN (port);
+        return COPY(port);
 
       default:
         break;
     }
 
-    return R_UNHANDLED;
-}
-
-
-//
-//  get-serial-actor-handle: native [
-//
-//  {Retrieve handle to the native actor for the serial port}
-//
-//      return: [handle!]
-//  ]
-//
-REBNATIVE(get_serial_actor_handle)
-{
-    OS_Register_Device(&Dev_Serial);
-
-    Make_Port_Actor_Handle(D_OUT, &Serial_Actor);
-    return D_OUT;
+    return UNHANDLED;
 }

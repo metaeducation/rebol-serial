@@ -1,5 +1,5 @@
 //
-//  File: %dev-serial.c
+//  File: %serial-posix.c
 //  Summary: "Device: Serial port access for Posix"
 //  Project: "Rebol 3 Interpreter and Run-time (Ren-C branch)"
 //  Homepage: https://github.com/metaeducation/ren-c/
@@ -20,6 +20,21 @@
 //
 //=////////////////////////////////////////////////////////////////////////=//
 //
+// This code is being kept compiling, but does not work at present.
+//
+// See README.md for notes about this extension.
+//
+//=//// NOTES /////////////////////////////////////////////////////////////=//
+//
+// A. TTY has many attributes. Refer to "man tcgetattr" for descriptions.
+//
+// B. The original code had an unimplemented Query_Serial() function.  All
+//    it had in it was:
+//
+//        struct pollfd pfd;
+//        pfd.events = POLLIN;
+//        n = poll(&pfd, 1, 0);
+//
 
 #include <stdlib.h>
 #include <string.h>
@@ -36,10 +51,14 @@
 
 #include "req-serial.h"
 
+typedef int TtyFileDescriptor;
+typedef struct termios TtyAttributes;
+
+typedef ssize_t SizeOrNegative;  // holds a size, or negative if error
+
 #define MAX_SERIAL_PATH 128
 
-/* BXXX constants are defined in termios.h */
-const int speeds[] = {
+const int speeds[] = {  // BXXX constants are defined in termios.h
     50, B50,
     75, B75,
     110, B110,
@@ -61,321 +80,300 @@ const int speeds[] = {
     0
 };
 
-/***********************************************************************
-**
-**  Local Functions
-**
-***********************************************************************/
 
-static struct termios *Get_Serial_Settings(int ttyfd)
-{
-    struct termios *attr
-        = cast(struct termios*, malloc(sizeof(struct termios)));
-    if (attr) {
-        if (tcgetattr(ttyfd, attr) == -1) {
-            free(attr);
-            attr = NULL;
-        }
+//=//// LOCAL FUNCTIONS ///////////////////////////////////////////////////=//
+
+
+static Option(Error*) Trap_Get_Serial_Settings(
+    Sink(TtyAttributes*) attr,
+    TtyFileDescriptor ttyfd
+){
+    *attr = rebAlloc(TtyAttributes);
+    if (tcgetattr(ttyfd, *attr) != 0) {
+        rebFree(attr);
+        Corrupt_Pointer_If_Debug(*attr);
+        return Error_OS(errno);
     }
-    return attr;
+    return nullptr;
 }
 
 
-static REBINT Set_Serial_Settings(int ttyfd, REBREQ *req)
-{
-    REBINT n;
-    struct termios attr;
-    struct devreq_serial *serial = ReqSerial(req);
-    REBINT speed = serial->baud;
+static Option(Error*) Trap_Set_Serial_Settings(
+    TtyFileDescriptor ttyfd,
+    SerialConnection *serial
+){
+
+    TtyAttributes attr;
     memset(&attr, 0, sizeof(attr));
-#ifdef DEBUG_SERIAL
-    printf("setting attributes: speed %d\n", speed);
-#endif
-    for (n = 0; speeds[n]; n += 2) {
-        if (speed == speeds[n]) {
-            speed = speeds[n+1];
+
+  #if DEBUG_SERIAL_EXTENSION
+    printf("setting attributes: baud_rate %d\n", serial->baud_rate);
+  #endif
+
+    int speed;
+
+    for (Offset n = 0; true; n += 2) {
+        if (speeds[n] == 0)  // invalid (used default CB115200 before)
+            return Error_User("Invalid baud rate");
+
+        if (serial->baud_rate == speeds[n]) {
+            speed = speeds[n + 1];
             break;
         }
     }
-    if (speeds[n] == 0) speed = B115200; // invalid, use default
 
-    cfsetospeed (&attr, speed);
-    cfsetispeed (&attr, speed);
+    cfsetospeed(&attr, speed);  // output speed
+    cfsetispeed(&attr, speed);  // input speed
 
-    // TTY has many attributes. Refer to "man tcgetattr" for descriptions.
-    // C-flags - control modes:
-    attr.c_cflag |= CREAD | CLOCAL;
+    attr.c_cflag |= CREAD | CLOCAL;  // C-flags: control modes, see [A] above
 
-    attr.c_cflag &= ~CSIZE; /* clear data size bits */
+    attr.c_cflag &= (~ CSIZE);  // clear data size bits
 
     switch (serial->data_bits) {
-        case 5:
-            attr.c_cflag |= CS5;
-            break;
-        case 6:
-            attr.c_cflag |= CS6;
-            break;
-        case 7:
-            attr.c_cflag |= CS7;
-            break;
-        case 8:
-        default:
-            attr.c_cflag |= CS8;
+      case 5:
+        attr.c_cflag |= CS5;
+        break;
+
+      case 6:
+        attr.c_cflag |= CS6;
+        break;
+
+      case 7:
+        attr.c_cflag |= CS7;
+        break;
+
+      data_bits_8_case:
+      case 8:
+        attr.c_cflag |= CS8;
+        break;
+
+      default:
+        assert(false);
+        goto data_bits_8_case;
     }
 
     switch (serial->parity) {
-        case SERIAL_PARITY_ODD:
-            attr.c_cflag |= PARENB;
-            attr.c_cflag |= PARODD;
-            break;
+      parity_none_case:
+      case SERIAL_PARITY_NONE:
+        attr.c_cflag &= ~PARENB;
+        break;
 
-        case SERIAL_PARITY_EVEN:
-            attr.c_cflag |= PARENB;
-            attr.c_cflag &= ~PARODD;
-            break;
+      case SERIAL_PARITY_ODD:
+        attr.c_cflag |= PARENB;
+        attr.c_cflag |= PARODD;
+        break;
 
-        case SERIAL_PARITY_NONE:
-        default:
-            attr.c_cflag &= ~PARENB;
-            break;
+      case SERIAL_PARITY_EVEN:
+        attr.c_cflag |= PARENB;
+        attr.c_cflag &= ~PARODD;
+        break;
+
+      default:
+        assert(false);
+        goto parity_none_case;
     }
 
     switch (serial->stop_bits) {
-        case 2:
-            attr.c_cflag |= CSTOPB;
-            break;
-        case 1:
-        default:
-            attr.c_cflag &= ~CSTOPB;
-            break;
+      stop_bits_1_case:
+      case 1:
+        attr.c_cflag &= ~CSTOPB;
+        break;
+
+      case 2:
+        attr.c_cflag |= CSTOPB;
+        break;
+
+      default:
+        assert(false);
+        goto stop_bits_1_case;
     }
 
-#ifdef CNEW_RTSCTS
+  #ifdef CNEW_RTSCTS
     switch (serial->parity) {
-        case SERIAL_FLOW_CONTROL_HARDWARE:
-            attr.c_cflag |= CNEW_RTSCTS;
-            break;
-        case SERIAL_FLOW_CONTROL_SOFTWARE:
-            attr.c_cflag &= ~CNEW_RTSCTS;
-            break;
-        case SERIAL_FLOW_CONTROL_NONE:
-        default:
-            break;
+      flow_control_none_case:
+      case SERIAL_FLOW_CONTROL_NONE:
+        break;
+
+      case SERIAL_FLOW_CONTROL_HARDWARE:
+        attr.c_cflag |= CNEW_RTSCTS;
+        break;
+
+      case SERIAL_FLOW_CONTROL_SOFTWARE:
+        attr.c_cflag &= ~CNEW_RTSCTS;
+        break;
+
+      default:
+        assert(false);
+        goto flow_control_none_case;
     }
-#endif
+  #endif
 
-    // L-flags - local modes:
-    attr.c_lflag = 0; // raw, not ICANON
+    attr.c_lflag = 0;  // L-flags: local modes (raw, not ICANON)
 
-    // I-flags - input modes:
-    attr.c_iflag |= IGNPAR;
+    attr.c_iflag |= IGNPAR;  // I-flags: input modes
 
-    // O-flags - output modes:
-    attr.c_oflag = 0;
+    attr.c_oflag = 0;  // O-flags: output modes
 
-    // Control characters:
-    // R3 devices are non-blocking (polled for changes):
-    attr.c_cc[VMIN]  = 0;
-    attr.c_cc[VTIME] = 0;
+    attr.c_cc[VMIN]  = 0;  // control characters...
+    attr.c_cc[VTIME] = 0;  // we use non-blocking IO, so...not needed (?)
 
-    // Make sure OS queues are empty:
-    tcflush(ttyfd, TCIFLUSH);
+    if (tcflush(ttyfd, TCIFLUSH) != 0)  // make sure OS queues are empty
+        return Error_OS(errno);
 
-    // Set new attributes:
-    if (tcsetattr(ttyfd, TCSANOW, &attr)) return 2;
+    if (tcsetattr(ttyfd, TCSANOW, &attr) != 0)  // Set new attributes
+        return Error_OS(errno);
 
-    return 0;
+    return nullptr;  // no error
+}
+
+
+//=//// EXPORTED FUNCTIONS ////////////////////////////////////////////////=//
+
+
+//
+//  Get_Serial_Max_Baud_Rate: C
+//
+SerialBaudRate Get_Serial_Max_Baud_Rate(void) {
+    int max = 0;
+    for (int n = 0; speeds[n] != 0; n += 2)
+        max = speeds[n];
+    return max;
 }
 
 //
-//  Open_Serial: C
+//  Trap_Open_Serial: C
 //
 // serial.path = the /dev name for the serial port
 // serial.baud = speed (baudrate)
 //
-DEVICE_CMD Open_Serial(REBREQ *req)
+Option(Error*) Trap_Open_Serial(SerialConnection* serial)
 {
-    struct devreq_serial *serial = ReqSerial(req);
-
-    assert(serial->path != NULL);
+    assert(serial->path != nullptr);
 
     char path_utf8[MAX_SERIAL_PATH];
-    REBLEN size = rebSpellIntoQ(
+    Size size = rebSpellInto(
         path_utf8,
         MAX_SERIAL_PATH,
-        serial->path,
-        rebEND
+        serial->path
     );
 
-    if (path_utf8[0] != '/') { // relative path, insert `/dev` before slash
+    if (path_utf8[0] != '/') {  // relative path, insert `/dev` before slash
         memmove(path_utf8 + 4, path_utf8, size + 1);
         memcpy(path_utf8, "/dev", 4);
     }
 
-    int h = open(path_utf8, O_RDWR | O_NOCTTY | O_NONBLOCK);
-    if (h < 0)
-        rebFail_OS (errno);
+    TtyFileDescriptor ttyfd = open(path_utf8, O_RDWR | O_NOCTTY | O_NONBLOCK);
+    if (ttyfd == -1)
+        return Error_OS(errno);
 
-    // Getting prior attributes:
+    TtyAttributes* prior_attr;
+    Option(Error*) e_get = Trap_Get_Serial_Settings(&prior_attr, ttyfd);
+    if (e_get) {
+        close(ttyfd);
+        return e_get;
+    }
+    serial->prior_attr = prior_attr;
 
-    serial->prior_attr = Get_Serial_Settings(h);
-    if (tcgetattr(h, cast(struct termios*, serial->prior_attr)) != 0) {
-        int errno_cache = errno;
-        close(h);
-        rebFail_OS (errno_cache);
+    Option(Error*) e_set = Trap_Set_Serial_Settings(ttyfd, serial);
+    if (e_set) {
+        close(ttyfd);
+        return e_set;
     }
 
-    if (Set_Serial_Settings(h, req) == 0) {
-        int errno_cache = errno;
-        close(h);
-        rebFail_OS (errno_cache);
-    }
-
-    Req(req)->requestee.id = h;
-    return DR_DONE;
+    serial->handle = p_cast(void*, cast(intptr_t, ttyfd));
+    return nullptr;
 }
 
 
 //
-//  Close_Serial: C
+//  Trap_Read_Serial: C
 //
-DEVICE_CMD Close_Serial(REBREQ *serial)
+Option(Error*) Trap_Read_Serial(SerialConnection* serial)
 {
-    struct rebol_devreq *req = Req(serial);
-    if (req->requestee.id) {
-        // !!! should we free serial->prior_attr termios struct?
-        tcsetattr(
-            req->requestee.id,
-            TCSANOW,
-            cast(struct termios*, ReqSerial(serial)->prior_attr)
-        );
-        close(req->requestee.id);
-        req->requestee.id = 0;
-    }
-    return DR_DONE;
-}
+    assert(serial->handle != nullptr);
+    TtyFileDescriptor ttyfd = cast(TtyFileDescriptor,
+        i_cast(intptr_t, serial->handle)
+    );
 
+    SizeOrNegative result = read(ttyfd, serial->data, serial->length);
 
-//
-//  Read_Serial: C
-//
-DEVICE_CMD Read_Serial(REBREQ *serial)
-{
-    struct rebol_devreq *req = Req(serial);
+  #if DEBUG_SERIAL_EXTENSION
+    printf("read %d ret: %d\n", serial->length, result);
+  #endif
 
-    assert(req->requestee.id != 0);
-
-    ssize_t result = read(req->requestee.id, req->common.data, req->length);
-
-#ifdef DEBUG_SERIAL
-    printf("read %d ret: %d\n", req->length, result);
-#endif
-
-    if (result < 0)
-        rebFail_OS (errno);
+    if (result == -1)
+        return Error_OS(errno);
 
     if (result == 0)
-        return DR_PEND;
+        fail ("The original implementation queued PENDING here");
 
-    req->actual = result;
+    serial->actual = result;
 
-    rebElide(
-        "insert system/ports/system make event! [",
-            "type: 'read",
-            "port:", CTX_ARCHETYPE(MISC(ReqPortCtx, serial)),
-        "]",
-    rebEND);
-
-    return DR_DONE;
+    fail ("The original implementation posted a WAS-READ event here");
 }
 
 
 //
-//  Write_Serial: C
+//  Trap_Write_Serial: C
 //
-DEVICE_CMD Write_Serial(REBREQ *serial)
+Option(Error*) Trap_Write_Serial(SerialConnection* serial)
 {
-    struct rebol_devreq *req = Req(serial);
+    assert(serial->handle != nullptr);
+    TtyFileDescriptor ttyfd = cast(TtyFileDescriptor,
+        i_cast(intptr_t, serial->handle)
+    );
 
-    size_t len = req->length - req->actual;
-
-    assert(req->requestee.id != 0);
+    Size len = serial->length - serial->actual;
 
     if (len <= 0)
-        return DR_DONE;
+        fail ("The original implementation returned DONE here");
 
-    int result = write(req->requestee.id, req->common.data, len);
+    SizeOrNegative result = write(ttyfd, serial->data, len);
 
-#ifdef DEBUG_SERIAL
+  #if DEBUG_SERIAL_EXTENSION
     printf("write %d ret: %d\n", len, result);
-#endif
+  #endif
 
-    if (result < 0) {
+    if (result == -1) {
         if (errno == EAGAIN)
-            return DR_PEND;
+            fail ("The original implementation queued PENDING here");
 
-        rebFail_OS (errno);
+        return Error_OS(errno);
     }
 
-    req->actual += result;
-    req->common.data += result;
-    if (req->actual >= req->length) {
-        rebElide(
-            "insert system/ports/system make event! [",
-                "type: 'wrote",
-                "port:", CTX_ARCHETYPE(MISC(ReqPortCtx, serial)),
-            "]",
-        rebEND);
+    serial->actual += result;
+    serial->data += result;
 
-        return DR_DONE;
-    }
+    if (serial->actual >= serial->length)
+        fail ("The original implementation posted a WAS-WRITTEN event here");
 
-    req->flags |= RRF_ACTIVE; // notify OS_WAIT of activity
-    return DR_PEND;
+    fail ("The original implementation queued PENDING here");
 }
 
 
 //
-//  Query_Serial: C
+//  Trap_Close_Serial: C
 //
-DEVICE_CMD Query_Serial(REBREQ *req)
+Option(Error*) Trap_Close_Serial(SerialConnection* serial)
 {
-#ifdef QUERY_IMPLEMENTED
-    struct pollfd pfd;
+    assert(serial->handle != nullptr);
 
-    if (req->requestee.id) {
-        pfd.fd = req->requestee.id;
-        pfd.events = POLLIN;
-        n = poll(&pfd, 1, 0);
-    }
-#else
-    UNUSED(req);
-#endif
-    return DR_DONE;
+    TtyFileDescriptor ttyfd = cast(TtyFileDescriptor,
+        i_cast(intptr_t, serial->handle)
+    );
+
+    TtyAttributes* prior_attr = cast(TtyAttributes*, serial->prior_attr);
+
+    int ret = tcsetattr(ttyfd, TCSANOW, prior_attr);
+    int errno_copy = errno;  // close() may change errno
+
+    // !!! should we free serial->prior_attr?
+
+    close(ttyfd);
+
+    if (ret != 0)
+        return Error_OS(errno_copy);
+
+    serial->handle = nullptr;
+    return nullptr;
 }
-
-
-/***********************************************************************
-**
-**  Command Dispatch Table (RDC_ enum order)
-**
-***********************************************************************/
-
-static DEVICE_CMD_CFUNC Dev_Cmds[RDC_MAX] = {
-    0,
-    0,
-    Open_Serial,
-    Close_Serial,
-    Read_Serial,
-    Write_Serial,
-    0,  // connect
-    Query_Serial,
-    0,  // create
-    0,  // delete
-    0   // rename
-};
-
-DEFINE_DEV(
-    Dev_Serial,
-    "Serial IO", 1, Dev_Cmds, RDC_MAX, sizeof(struct devreq_serial)
-);
