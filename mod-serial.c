@@ -34,6 +34,7 @@
 //    in a compiling state, with the hope of plugging into that someday.
 //
 
+#include "sys-core.h"
 #include "tmp-mod-serial.h"
 
 #include "req-serial.h"
