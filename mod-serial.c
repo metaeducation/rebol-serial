@@ -1,9 +1,9 @@
 //
-//  File: %mod-serial.c
-//  Summary: "serial port interface"
-//  Section: ports
-//  Project: "Rebol 3 Interpreter and Run-time (Ren-C branch)"
-//  Homepage: https://github.com/metaeducation/ren-c/
+//  file: %mod-serial.c
+//  summary: "serial port interface"
+//  section: ports
+//  project: "Rebol 3 Interpreter and Run-time (Ren-C branch)"
+//  homepage: https://github.com/metaeducation/ren-c/
 //
 //=////////////////////////////////////////////////////////////////////////=//
 //

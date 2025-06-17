@@ -1,10 +1,10 @@
-REBOL [
-    Title: "Serial Port Extension"
-    Name: Serial
-    Type: Module
-    Options: [isolate]
-    Version: 1.0.0
-    License: {Apache 2.0}
+Rebol [
+    title: "Serial Port Extension"
+    name: Serial
+    type: module
+    options: [isolate]
+    version: 1.0.0
+    license: "Apache 2.0"
 ]
 
 port-spec-serial: make system.standard.port-spec-head [

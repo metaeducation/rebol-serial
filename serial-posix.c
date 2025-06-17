@@ -1,8 +1,8 @@
 //
-//  File: %serial-posix.c
-//  Summary: "Device: Serial port access for Posix"
-//  Project: "Rebol 3 Interpreter and Run-time (Ren-C branch)"
-//  Homepage: https://github.com/metaeducation/ren-c/
+//  file: %serial-posix.c
+//  summary: "Device: Serial port access for Posix"
+//  project: "Rebol 3 Interpreter and Run-time (Ren-C branch)"
+//  homepage: https://github.com/metaeducation/ren-c/
 //
 //=////////////////////////////////////////////////////////////////////////=//
 //
