@@ -58,13 +58,26 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
     Option(Error*) e;
 
-    Value* spec = Varlist_Slot(ctx, STD_PORT_SPEC);
+    DECLARE_VALUE (spec);
+    Slot* spec_slot = Varlist_Slot(ctx, STD_PORT_SPEC);
+    e = Trap_Read_Slot(spec, spec_slot);
+    if (e)
+        return PANIC(unwrap e);
 
-    Value* path = Obj_Value(spec, STD_PORT_SPEC_HEAD_REF);
+    DECLARE_VALUE (path);
+    Slot* head_ref_slot = Obj_Slot(spec, STD_PORT_SPEC_HEAD_REF);
+    e = Trap_Read_Slot(path, head_ref_slot);
+    if (e)
+        return PANIC(unwrap e);
     if (not Is_File(path))
         return PANIC(Error_Invalid_Spec_Raw(spec));
 
-    Value* state = Varlist_Slot(ctx, STD_PORT_STATE);
+    DECLARE_VALUE (state);
+    Slot* state_slot = Obj_Slot(spec, STD_PORT_STATE);
+    e = Trap_Read_Slot(state, state_slot);
+    if (e)
+        return PANIC(unwrap e);
+
     SerialConnection* serial = nullptr;  // in theory get from state...
     UNUSED(state);  // (SERIAL-RS232! will likely be its own datatype...)
 
@@ -161,7 +174,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         UNUSED(PARAM(LINES));  // handled in dispatcher
 
         // Setup the read buffer (allocate a buffer if needed):
-        Value* data = Varlist_Slot(ctx, STD_PORT_DATA);
+        Value* data = Slot_Hack(Varlist_Slot(ctx, STD_PORT_DATA));
         if (not Is_Blob(data))
             Init_Blob(data, Make_Binary(32000));
 
@@ -212,7 +225,10 @@ DECLARE_NATIVE(SERIAL_ACTOR)
                 len = n;
         }
 
-        Copy_Cell(Varlist_Slot(ctx, STD_PORT_DATA), data);  // keep it GC safe
+        Init(Value) init = Slot_Init_Hack(Varlist_Slot(ctx, STD_PORT_DATA));
+        Copy_Cell(init, data);
+        Remember_Cell_Is_Lifeguard(init);
+
         serial->length = len;
         serial->data = Cell_Blob_At_Known_Mutable(data);
         serial->actual = 0;
@@ -220,6 +236,8 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         // "send can happen immediately"
         //
         e = Trap_Write_Serial(serial);  // can send immediately
+        Forget_Cell_Was_Lifeguard(init);
+
         if (e)
             return PANIC(unwrap e);
 
