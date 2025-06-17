@@ -5,14 +5,14 @@ Rebol [
 
 use-librebol: 'no
 
-sources: %mod-serial.c
+sources: [mod-serial.c]
 
 depends: compose [
-    (switch platform-config.os-base [
+    (spread switch platform-config.os-base [
         'Windows [
-            [%serial-windows.c]
+            [serial-windows.c]
         ]
     ] else [
-        [%serial-posix.c]
+        [serial-posix.c]
     ])
 ]
