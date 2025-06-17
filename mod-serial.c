@@ -62,7 +62,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
     Value* path = Obj_Value(spec, STD_PORT_SPEC_HEAD_REF);
     if (not Is_File(path))
-        return FAIL(Error_Invalid_Spec_Raw(spec));
+        return PANIC(Error_Invalid_Spec_Raw(spec));
 
     Value* state = Varlist_Slot(ctx, STD_PORT_STATE);
     SerialConnection* serial = nullptr;  // in theory get from state...
@@ -219,7 +219,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
         // "send can happen immediately"
         //
-        Option(Error*) e = Trap_Write_Serial(serial);  // can send immediately
+        e = Trap_Write_Serial(serial);  // can send immediately
         if (e)
             return PANIC(unwrap e);
 
@@ -229,7 +229,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
       case SYM_CLOSE:
         if (serial->handle != nullptr) {  // !!! tolerate double closes?
-            Option(Error*) e = Trap_Close_Serial(serial);
+            e = Trap_Close_Serial(serial);
             if (e)
                 return PANIC(unwrap e);
 
