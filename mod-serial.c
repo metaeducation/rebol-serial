@@ -55,6 +55,9 @@ DECLARE_NATIVE(SERIAL_ACTOR)
     const Symbol* verb = Level_Verb(LEVEL);
 
     VarList* ctx = Cell_Varlist(port);
+
+    Option(Error*) e;
+
     Value* spec = Varlist_Slot(ctx, STD_PORT_SPEC);
 
     Value* path = Obj_Value(spec, STD_PORT_SPEC_HEAD_REF);
@@ -77,7 +80,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
                 "try match [file! text!] pick", spec, "'serial-path"
             );  // !!! handle needs release somewhere...
             if (not serial->path)
-                return "fail -{SERIAL-PATH must be FILE! or TEXT!}-";
+                return "panic -[SERIAL-PATH must be FILE! or TEXT!]-";
 
             SerialBaudRate max_baud_rate = Get_Serial_Max_Baud_Rate();
             int baud_rate = rebUnboxInteger("any [",
@@ -85,7 +88,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
                 "0"
             "]");
             if (baud_rate <= 0 or baud_rate > max_baud_rate)
-                return rebDelegate("fail [",
+                return rebDelegate("panic [",
                     "SERIAL-SPEED must be nonzero INTEGER!",
                     "up to", rebI(max_baud_rate),
                 "]");
@@ -96,13 +99,13 @@ DECLARE_NATIVE(SERIAL_ACTOR)
                 "0"
             "]");
             if (serial->data_bits < 5 or serial->data_bits > 8)
-                return "fail -{DATA-SIZE must be INTEGER [5 .. 8]}-";
+                return "panic -[DATA-SIZE must be INTEGER [5 .. 8]]-";
 
             serial->stop_bits = rebUnboxInteger(
                 "try match integer! pick", spec, "'serial-stop-bits"
             );
             if (serial->stop_bits != 1 and serial->stop_bits != 2)
-                return "fail -{STOP-BITS must be INTEGER [1 or 2]}-";
+                return "panic -[STOP-BITS must be INTEGER [1 or 2]]-";
 
             int parity = rebUnboxInteger(
                 "switch try pick", spec, "'serial-parity [",
@@ -112,7 +115,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
                 "] else [-1]"
             );
             if (parity == -1)
-                return "fail -{PARITY must be NONE/ODD/EVEN}-";
+                return "panic -[PARITY must be NONE/ODD/EVEN]-";
             serial->parity = cast(SerialParity, parity);
 
             int flow_control = rebUnboxInteger(
@@ -123,12 +126,12 @@ DECLARE_NATIVE(SERIAL_ACTOR)
                 "] else [-1]"
             );
             if (flow_control == -1)
-                return ("fail -{FLOW-CONTROL must be NONE/HARDWARE/SOFTWARE}-");
+                return ("panic -[FLOW-CONTROL must be NONE/HARDWARE/SOFTWARE]-");
             serial->flow_control = cast(SerialFlowControl, flow_control);
 
-            Option(Error*) e = Trap_Open_Serial(serial);
+            e = Trap_Open_Serial(serial);
             if (e)
-                return unwrap e;
+                return PANIC(unwrap e);
 
             return COPY(port); }
 
@@ -136,7 +139,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
             return COPY(port);
 
           default:
-            return FAIL(Error_On_Port(SYM_NOT_OPEN, port, -12));
+            return PANIC(Error_On_Port(SYM_NOT_OPEN, port, -12));
         }
     }
 
@@ -152,7 +155,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         UNUSED(PARAM(SOURCE));
 
         if (Bool_ARG(PART) or Bool_ARG(SEEK))
-            fail (Error_Bad_Refines_Raw());
+            panic (Error_Bad_Refines_Raw());
 
         UNUSED(PARAM(STRING));  // handled in dispatcher
         UNUSED(PARAM(LINES));  // handled in dispatcher
@@ -175,9 +178,9 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         printf("(max read length %d)", serial->length);
       #endif
 
-        Option(Error*) e = Trap_Read_Serial(serial);  // can recv immediately
+        e = Trap_Read_Serial(serial);  // can recv immediately
         if (e)
-            return unwrap e;
+            return PANIC(unwrap e);
 
         // !!! Incomplete reads need event loop interop, see [A] above
 
@@ -197,7 +200,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         UNUSED(PARAM(DESTINATION));
 
         if (Bool_ARG(SEEK) or Bool_ARG(APPEND) or Bool_ARG(LINES))
-            return FAIL(Error_Bad_Refines_Raw());
+            return PANIC(Error_Bad_Refines_Raw());
 
         // Determine length. Clip :PART to size of BLOB! if needed.
 
@@ -218,7 +221,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         //
         Option(Error*) e = Trap_Write_Serial(serial);  // can send immediately
         if (e)
-            return unwrap e;
+            return PANIC(unwrap e);
 
         // !!! Incomplete reads need event loop interop, see [A] above
 
@@ -228,7 +231,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         if (serial->handle != nullptr) {  // !!! tolerate double closes?
             Option(Error*) e = Trap_Close_Serial(serial);
             if (e)
-                return unwrap e;
+                return PANIC(unwrap e);
 
             assert(serial->handle == nullptr);
         }

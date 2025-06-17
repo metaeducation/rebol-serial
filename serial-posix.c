@@ -305,11 +305,11 @@ Option(Error*) Trap_Read_Serial(SerialConnection* serial)
         return Error_OS(errno);
 
     if (result == 0)
-        fail ("The original implementation queued PENDING here");
+        panic ("The original implementation queued PENDING here");
 
     serial->actual = result;
 
-    fail ("The original implementation posted a WAS-READ event here");
+    panic ("The original implementation posted a WAS-READ event here");
 }
 
 
@@ -326,7 +326,7 @@ Option(Error*) Trap_Write_Serial(SerialConnection* serial)
     Size len = serial->length - serial->actual;
 
     if (len <= 0)
-        fail ("The original implementation returned DONE here");
+        panic ("The original implementation returned DONE here");
 
     SizeOrNegative result = write(ttyfd, serial->data, len);
 
@@ -336,7 +336,7 @@ Option(Error*) Trap_Write_Serial(SerialConnection* serial)
 
     if (result == -1) {
         if (errno == EAGAIN)
-            fail ("The original implementation queued PENDING here");
+            panic ("The original implementation queued PENDING here");
 
         return Error_OS(errno);
     }
@@ -345,9 +345,9 @@ Option(Error*) Trap_Write_Serial(SerialConnection* serial)
     serial->data += result;
 
     if (serial->actual >= serial->length)
-        fail ("The original implementation posted a WAS-WRITTEN event here");
+        panic ("The original implementation posted a WAS-WRITTEN event here");
 
-    fail ("The original implementation queued PENDING here");
+    panic ("The original implementation queued PENDING here");
 }
 
 
