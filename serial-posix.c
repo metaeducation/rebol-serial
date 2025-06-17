@@ -94,7 +94,7 @@ static Option(Error*) Trap_Get_Serial_Settings(
         Corrupt_Pointer_If_Debug(*attr);
         return Error_OS(errno);
     }
-    return nullptr;
+    return SUCCESS;
 }
 
 
@@ -223,7 +223,7 @@ static Option(Error*) Trap_Set_Serial_Settings(
     if (tcsetattr(ttyfd, TCSANOW, &attr) != 0)  // Set new attributes
         return Error_OS(errno);
 
-    return nullptr;  // no error
+    return SUCCESS;
 }
 
 
@@ -281,7 +281,7 @@ Option(Error*) Trap_Open_Serial(SerialConnection* serial)
     }
 
     serial->handle = p_cast(void*, cast(intptr_t, ttyfd));
-    return nullptr;
+    return SUCCESS;
 }
 
 
@@ -375,5 +375,5 @@ Option(Error*) Trap_Close_Serial(SerialConnection* serial)
         return Error_OS(errno_copy);
 
     serial->handle = nullptr;
-    return nullptr;
+    return SUCCESS;
 }

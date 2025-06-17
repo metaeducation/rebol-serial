@@ -184,7 +184,7 @@ Option(Error*) Trap_Open_Serial(SerialConnection* serial)
     }
 
     serial->handle = h;
-    return nullptr;  // no error
+    return SUCCESS;
 }
 
 
@@ -198,7 +198,7 @@ Option(Error*) Trap_Close_Serial(SerialConnection* serial)
     if (not CloseHandle(serial->handle))
         return Error_OS(GetLastError());
 
-    return nullptr;  // no error
+    return SUCCESS;
 }
 
 
