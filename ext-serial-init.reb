@@ -29,7 +29,7 @@ sys.util/make-scheme [
                 path: across [to slash | <end>] one
                 speed: across to <end>
             ]
-            attempt [port.spec.speed: to integer! speed]
+            port.spec.speed: try to integer! speed
             port.spec.path: to file! path
         ]
     ]
