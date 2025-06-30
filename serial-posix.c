@@ -91,7 +91,7 @@ static Option(Error*) Trap_Get_Serial_Settings(
     *attr = rebAlloc(TtyAttributes);
     if (tcgetattr(ttyfd, *attr) != 0) {
         rebFree(attr);
-        Corrupt_Pointer_If_Debug(*attr);
+        Corrupt_If_Needful(*attr);
         return Error_OS(errno);
     }
     return SUCCESS;
@@ -305,11 +305,11 @@ Option(Error*) Trap_Read_Serial(SerialConnection* serial)
         return Error_OS(errno);
 
     if (result == 0)
-        panic ("The original implementation queued PENDING here");
+        abrupt_panic ("The original implementation queued PENDING here");
 
     serial->actual = result;
 
-    panic ("The original implementation posted a WAS-READ event here");
+    abrupt_panic ("The original implementation posted a WAS-READ event here");
 }
 
 
@@ -326,7 +326,7 @@ Option(Error*) Trap_Write_Serial(SerialConnection* serial)
     Size len = serial->length - serial->actual;
 
     if (len <= 0)
-        panic ("The original implementation returned DONE here");
+        abrupt_panic ("The original implementation returned DONE here");
 
     SizeOrNegative result = write(ttyfd, serial->data, len);
 
@@ -336,7 +336,7 @@ Option(Error*) Trap_Write_Serial(SerialConnection* serial)
 
     if (result == -1) {
         if (errno == EAGAIN)
-            panic ("The original implementation queued PENDING here");
+            abrupt_panic ("The original implementation queued PENDING here");
 
         return Error_OS(errno);
     }
@@ -345,9 +345,9 @@ Option(Error*) Trap_Write_Serial(SerialConnection* serial)
     serial->data += result;
 
     if (serial->actual >= serial->length)
-        panic ("The original implementation posted a WAS-WRITTEN event here");
+        abrupt_panic ("The original implementation posted a WAS-WRITTEN event here");
 
-    panic ("The original implementation queued PENDING here");
+    abrupt_panic ("The original implementation queued PENDING here");
 }
 
 

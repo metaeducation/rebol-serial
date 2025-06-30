@@ -62,21 +62,21 @@ DECLARE_NATIVE(SERIAL_ACTOR)
     Slot* spec_slot = Varlist_Slot(ctx, STD_PORT_SPEC);
     e = Trap_Read_Slot(spec, spec_slot);
     if (e)
-        return PANIC(unwrap e);
+        panic (unwrap e);
 
     DECLARE_VALUE (path);
     Slot* head_ref_slot = Obj_Slot(spec, STD_PORT_SPEC_HEAD_REF);
     e = Trap_Read_Slot(path, head_ref_slot);
     if (e)
-        return PANIC(unwrap e);
+        panic (unwrap e);
     if (not Is_File(path))
-        return PANIC(Error_Invalid_Spec_Raw(spec));
+        panic (Error_Invalid_Spec_Raw(spec));
 
     DECLARE_VALUE (state);
     Slot* state_slot = Obj_Slot(spec, STD_PORT_STATE);
     e = Trap_Read_Slot(state, state_slot);
     if (e)
-        return PANIC(unwrap e);
+        panic (unwrap e);
 
     SerialConnection* serial = nullptr;  // in theory get from state...
     UNUSED(state);  // (SERIAL-RS232! will likely be its own datatype...)
@@ -144,7 +144,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
             e = Trap_Open_Serial(serial);
             if (e)
-                return PANIC(unwrap e);
+                panic (unwrap e);
 
             return COPY(port); }
 
@@ -152,7 +152,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
             return COPY(port);
 
           default:
-            return PANIC(Error_On_Port(SYM_NOT_OPEN, port, -12));
+            panic (Error_On_Port(SYM_NOT_OPEN, port, -12));
         }
     }
 
@@ -168,7 +168,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         UNUSED(PARAM(SOURCE));
 
         if (Bool_ARG(PART) or Bool_ARG(SEEK))
-            panic (Error_Bad_Refines_Raw());
+            abrupt_panic (Error_Bad_Refines_Raw());
 
         UNUSED(PARAM(STRING));  // handled in dispatcher
         UNUSED(PARAM(LINES));  // handled in dispatcher
@@ -193,7 +193,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
         e = Trap_Read_Serial(serial);  // can recv immediately
         if (e)
-            return PANIC(unwrap e);
+            panic (unwrap e);
 
         // !!! Incomplete reads need event loop interop, see [A] above
 
@@ -213,12 +213,12 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         UNUSED(PARAM(DESTINATION));
 
         if (Bool_ARG(SEEK) or Bool_ARG(APPEND) or Bool_ARG(LINES))
-            return PANIC(Error_Bad_Refines_Raw());
+            panic (Error_Bad_Refines_Raw());
 
         // Determine length. Clip :PART to size of BLOB! if needed.
 
         Element* data = Element_ARG(DATA);
-        Length len = Cell_Series_Len_At(data);
+        Length len = Series_Len_At(data);
         if (Bool_ARG(PART)) {
             REBLEN n = Int32s(ARG(PART), 0);
             if (n <= len)
@@ -230,7 +230,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         Remember_Cell_Is_Lifeguard(init);
 
         serial->length = len;
-        serial->data = Cell_Blob_At_Known_Mutable(data);
+        serial->data = Blob_At_Known_Mutable(data);
         serial->actual = 0;
 
         // "send can happen immediately"
@@ -239,7 +239,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         Forget_Cell_Was_Lifeguard(init);
 
         if (e)
-            return PANIC(unwrap e);
+            panic (unwrap e);
 
         // !!! Incomplete reads need event loop interop, see [A] above
 
@@ -249,7 +249,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         if (serial->handle != nullptr) {  // !!! tolerate double closes?
             e = Trap_Close_Serial(serial);
             if (e)
-                return PANIC(unwrap e);
+                panic (unwrap e);
 
             assert(serial->handle == nullptr);
         }
