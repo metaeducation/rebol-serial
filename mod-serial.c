@@ -60,23 +60,17 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
     DECLARE_VALUE (spec);
     Slot* spec_slot = Varlist_Slot(ctx, STD_PORT_SPEC);
-    e = Trap_Read_Slot(spec, spec_slot);
-    if (e)
-        panic (unwrap e);
+    required (Read_Slot(spec, spec_slot));
 
     DECLARE_VALUE (path);
     Slot* head_ref_slot = Obj_Slot(spec, STD_PORT_SPEC_HEAD_REF);
-    e = Trap_Read_Slot(path, head_ref_slot);
-    if (e)
-        panic (unwrap e);
+    required (Read_Slot(path, head_ref_slot));
     if (not Is_File(path))
         panic (Error_Invalid_Spec_Raw(spec));
 
     DECLARE_VALUE (state);
     Slot* state_slot = Obj_Slot(spec, STD_PORT_STATE);
-    e = Trap_Read_Slot(state, state_slot);
-    if (e)
-        panic (unwrap e);
+    required (Read_Slot(state, state_slot));
 
     SerialConnection* serial = nullptr;  // in theory get from state...
     UNUSED(state);  // (SERIAL-RS232! will likely be its own datatype...)
@@ -84,7 +78,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
   //=//// ACTIONS FOR UNOPENED SERIAL PORT ////////////////////////////////=//
 
     if (serial->handle == nullptr) {
-        switch (Symbol_Id(verb)) {
+        switch (maybe Symbol_Id(verb)) {
           case SYM_OPEN_Q:
             return Init_False(OUT);
 
@@ -158,7 +152,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
   //=//// ACTIONS FOR AN OPEN SERIAL PORT /////////////////////////////////=//
 
-    switch (Symbol_Id(verb)) {
+    switch (maybe Symbol_Id(verb)) {
       case SYM_OPEN_Q:
         return Init_True(OUT);
 
@@ -168,7 +162,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         UNUSED(PARAM(SOURCE));
 
         if (Bool_ARG(PART) or Bool_ARG(SEEK))
-            abrupt_panic (Error_Bad_Refines_Raw());
+            panic (Error_Bad_Refines_Raw());
 
         UNUSED(PARAM(STRING));  // handled in dispatcher
         UNUSED(PARAM(LINES));  // handled in dispatcher
@@ -259,5 +253,5 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         break;
     }
 
-    return UNHANDLED;
+    panic (UNHANDLED);
 }

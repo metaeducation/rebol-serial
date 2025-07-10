@@ -222,7 +222,7 @@ Option(Error*) Trap_Read_Serial(SerialConnection* serial)
     }
 
     if (result == 0)
-        abrupt_panic ("The original implementation queued PENDING here");
+        panic ("The original implementation queued PENDING here");
 
     serial->actual = result;
 
@@ -230,7 +230,7 @@ Option(Error*) Trap_Read_Serial(SerialConnection* serial)
     printf("read %d ret: %d\n", serial->length, serial->actual);
   #endif
 
-    abrupt_panic ("The original implementation posted a WAS-READ event here");
+    panic ("The original implementation posted a WAS-READ event here");
 }
 
 
@@ -244,7 +244,7 @@ Option(Error*) Trap_Write_Serial(SerialConnection* serial)
     Size len = serial->length - serial->actual;
 
     if (len <= 0)
-        abrupt_panic ("The original implementation returned DONE here");
+        panic ("The original implementation returned DONE here");
 
     DWORD result;
     LPOVERLAPPED overlapped = nullptr;
@@ -262,7 +262,7 @@ Option(Error*) Trap_Write_Serial(SerialConnection* serial)
     serial->data += result;
 
     if (serial->actual >= serial->length)
-        abrupt_panic ("The original implementation posted a WAS-WRITTEN event here");
+        panic ("The original implementation posted a WAS-WRITTEN event here");
 
-    abrupt_panic ("The original implementation queued PENDING here");
+    panic ("The original implementation queued PENDING here");
 }
