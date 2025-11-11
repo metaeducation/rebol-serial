@@ -46,7 +46,7 @@
 //
 //  "Handler for OLDGENERIC dispatch on Serial PORT!s"
 //
-//      return: [any-value?]
+//      return: [any-stable?]
 //  ]
 //
 DECLARE_NATIVE(SERIAL_ACTOR)
@@ -60,17 +60,23 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
     DECLARE_VALUE (spec);
     Slot* spec_slot = Varlist_Slot(ctx, STD_PORT_SPEC);
-    required (Read_Slot(spec, spec_slot));
+    require (
+      Read_Slot(spec, spec_slot)
+    );
 
     DECLARE_VALUE (path);
     Slot* head_ref_slot = Obj_Slot(spec, STD_PORT_SPEC_HEAD_REF);
-    required (Read_Slot(path, head_ref_slot));
+    require (
+      Read_Slot(path, head_ref_slot)
+    );
     if (not Is_File(path))
         panic (Error_Invalid_Spec_Raw(spec));
 
     DECLARE_VALUE (state);
     Slot* state_slot = Obj_Slot(spec, STD_PORT_STATE);
-    required (Read_Slot(state, state_slot));
+    require (
+      Read_Slot(state, state_slot)
+    );
 
     SerialConnection* serial = nullptr;  // in theory get from state...
     UNUSED(state);  // (SERIAL-RS232! will likely be its own datatype...)
@@ -78,7 +84,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
   //=//// ACTIONS FOR UNOPENED SERIAL PORT ////////////////////////////////=//
 
     if (serial->handle == nullptr) {
-        switch (maybe Symbol_Id(verb)) {
+        switch (opt Symbol_Id(verb)) {
           case SYM_OPEN_Q:
             return Init_False(OUT);
 
@@ -152,7 +158,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
   //=//// ACTIONS FOR AN OPEN SERIAL PORT /////////////////////////////////=//
 
-    switch (maybe Symbol_Id(verb)) {
+    switch (opt Symbol_Id(verb)) {
       case SYM_OPEN_Q:
         return Init_True(OUT);
 
@@ -174,8 +180,11 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
         Binary* bin = Cell_Binary_Known_Mutable(data);
         serial->length = Flex_Available_Space(bin);
-        if (serial->length < 32000 / 2)
-            Extend_Flex_If_Necessary(bin, 32000);
+        if (serial->length < 32000 / 2) {
+            require (
+              Extend_Flex_If_Necessary_But_Dont_Change_Used(bin, 32000)
+            );
+        }
 
         serial->length = Flex_Available_Space(bin);
         serial->data = Binary_Tail(bin);  // write at tail
