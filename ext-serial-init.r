@@ -22,7 +22,7 @@ sys.util/make-scheme [
 
     actor: serial-actor/
 
-    init: func [port <local> path speed] [
+    init: proc [port {path speed}] [
         if url? port.spec.ref [
             parse port.spec.ref [
                 thru ":" repeat [0 2] slash
