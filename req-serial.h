@@ -16,7 +16,7 @@ typedef enum {
 
 struct SerialConnection {
     void* handle;  // TtyFileDescriptor on Linux, HANDLE on Windows
-    RebolValue* path;  // device path string (in OS local format)
+    Api(Stable*) path;  // device path string (in OS local format)
     void* prior_attr;  // termios: retain prev settings to revert on close
     SerialBaudRate baud_rate;
     uint8_t data_bits;  // 5, 6, 7 or 8

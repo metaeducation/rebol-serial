@@ -51,20 +51,20 @@
 //
 DECLARE_NATIVE(SERIAL_ACTOR)
 {
-    Value* port = ARG_N(1);
+    Stable* port = ARG_N(1);
     const Symbol* verb = Level_Verb(LEVEL);
 
     VarList* ctx = Cell_Varlist(port);
 
     Option(Error*) e;
 
-    DECLARE_VALUE (spec);
+    DECLARE_STABLE (spec);
     Slot* spec_slot = Varlist_Slot(ctx, STD_PORT_SPEC);
     require (
       Read_Slot(spec, spec_slot)
     );
 
-    DECLARE_VALUE (path);
+    DECLARE_STABLE (path);
     Slot* head_ref_slot = Obj_Slot(spec, STD_PORT_SPEC_HEAD_REF);
     require (
       Read_Slot(path, head_ref_slot)
@@ -72,7 +72,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
     if (not Is_File(path))
         panic (Error_Invalid_Spec_Raw(spec));
 
-    DECLARE_VALUE (state);
+    DECLARE_STABLE (state);
     Slot* state_slot = Obj_Slot(spec, STD_PORT_STATE);
     require (
       Read_Slot(state, state_slot)
@@ -89,7 +89,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
             return Init_False(OUT);
 
           case SYM_OPEN: {
-            serial->path = rebValue(
+            serial->path = rebStable(
                 "try match [file! text!] pick", spec, "'serial-path"
             );  // !!! handle needs release somewhere...
             if (not serial->path)
@@ -174,7 +174,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         UNUSED(PARAM(LINES));  // handled in dispatcher
 
         // Setup the read buffer (allocate a buffer if needed):
-        Value* data = Slot_Hack(Varlist_Slot(ctx, STD_PORT_DATA));
+        Stable* data = Slot_Hack(Varlist_Slot(ctx, STD_PORT_DATA));
         if (not Is_Blob(data))
             Init_Blob(data, Make_Binary(32000));
 
@@ -228,7 +228,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
                 len = n;
         }
 
-        Init(Value) init = Slot_Init_Hack(Varlist_Slot(ctx, STD_PORT_DATA));
+        Init(Stable) init = Slot_Init_Hack(Varlist_Slot(ctx, STD_PORT_DATA));
         Copy_Cell(init, data);
         Remember_Cell_Is_Lifeguard(init);
 
