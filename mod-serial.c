@@ -167,7 +167,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
         UNUSED(PARAM(SOURCE));
 
-        if (Bool_ARG(PART) or Bool_ARG(SEEK))
+        if (ARG(PART) or ARG(SEEK))
             panic (Error_Bad_Refines_Raw());
 
         UNUSED(PARAM(STRING));  // handled in dispatcher
@@ -215,15 +215,15 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
         UNUSED(PARAM(DESTINATION));
 
-        if (Bool_ARG(SEEK) or Bool_ARG(APPEND) or Bool_ARG(LINES))
+        if (ARG(SEEK) or ARG(APPEND) or ARG(LINES))
             panic (Error_Bad_Refines_Raw());
 
         // Determine length. Clip :PART to size of BLOB! if needed.
 
         Element* data = Element_ARG(DATA);
         Length len = Series_Len_At(data);
-        if (Bool_ARG(PART)) {
-            REBLEN n = Int32s(ARG(PART), 0);
+        if (ARG(PART)) {
+            REBLEN n = Int32s(unwrap ARG(PART), 0);
             if (n <= len)
                 len = n;
         }
