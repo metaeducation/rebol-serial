@@ -14,7 +14,7 @@ typedef enum {
     SERIAL_FLOW_CONTROL_SOFTWARE
 } SerialFlowControl;
 
-struct SerialConnection {
+typedef struct {
     void* handle;  // TtyFileDescriptor on Linux, HANDLE on Windows
     Api(Stable*) path;  // device path string (in OS local format)
     void* prior_attr;  // termios: retain prev settings to revert on close
@@ -27,7 +27,7 @@ struct SerialConnection {
     Byte* data;
     Size length;
     Size actual;
-};
+} SerialConnection;
 
 extern SerialBaudRate Get_Serial_Max_Baud_Rate(void);
 extern Option(Error*) Trap_Read_Serial(SerialConnection* serial);
