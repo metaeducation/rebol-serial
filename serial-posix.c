@@ -280,7 +280,7 @@ Option(Error*) Trap_Open_Serial(SerialConnection* serial)
         return e_set;
     }
 
-    serial->handle = p_cast(void*, cast(intptr_t, ttyfd));
+    serial->handle = p_cast(void*, i_cast(intptr_t, ttyfd));
     return SUCCESS;
 }
 
@@ -292,7 +292,7 @@ Option(Error*) Trap_Read_Serial(SerialConnection* serial)
 {
     assert(serial->handle != nullptr);
     TtyFileDescriptor ttyfd = cast(TtyFileDescriptor,
-        i_cast(intptr_t, serial->handle)
+        p_cast(intptr_t, serial->handle)
     );
 
     SizeOrNegative result = read(ttyfd, serial->data, serial->length);
@@ -320,7 +320,7 @@ Option(Error*) Trap_Write_Serial(SerialConnection* serial)
 {
     assert(serial->handle != nullptr);
     TtyFileDescriptor ttyfd = cast(TtyFileDescriptor,
-        i_cast(intptr_t, serial->handle)
+        p_cast(intptr_t, serial->handle)
     );
 
     Size len = serial->length - serial->actual;
@@ -359,7 +359,7 @@ Option(Error*) Trap_Close_Serial(SerialConnection* serial)
     assert(serial->handle != nullptr);
 
     TtyFileDescriptor ttyfd = cast(TtyFileDescriptor,
-        i_cast(intptr_t, serial->handle)
+        p_cast(intptr_t, serial->handle)
     );
 
     TtyAttributes* prior_attr = cast(TtyAttributes*, serial->prior_attr);

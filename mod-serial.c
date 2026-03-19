@@ -42,7 +42,7 @@
 #define MAX_SERIAL_DEV_PATH 128
 
 //
-//  export serial-actor: native [
+//  export /serial-actor: native [
 //
 //  "Handler for OLDGENERIC dispatch on Serial PORT!s"
 //
@@ -86,7 +86,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
     if (serial->handle == nullptr) {
         switch (opt Symbol_Id(verb)) {
           case SYM_OPEN_Q:
-            return Init_False(OUT);
+            return LOGIC_OUT(false);
 
           case SYM_OPEN: {
             serial->path = rebStable(
@@ -146,10 +146,10 @@ DECLARE_NATIVE(SERIAL_ACTOR)
             if (e)
                 panic (unwrap e);
 
-            return COPY(port); }
+            return COPY_TO_OUT(port); }
 
           case SYM_CLOSE:
-            return COPY(port);
+            return COPY_TO_OUT(port);
 
           default:
             panic (Error_On_Port(SYM_NOT_OPEN, port, -12));
@@ -160,12 +160,10 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
     switch (opt Symbol_Id(verb)) {
       case SYM_OPEN_Q:
-        return Init_True(OUT);
+        return LOGIC_OUT(true);
 
       case SYM_READ: {
         INCLUDE_PARAMS_OF_READ;
-
-        UNUSED(PARAM(SOURCE));
 
         if (ARG(PART) or ARG(SEEK))
             panic (Error_Bad_Refines_Raw());
@@ -174,7 +172,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         UNUSED(PARAM(LINES));  // handled in dispatcher
 
         // Setup the read buffer (allocate a buffer if needed):
-        Stable* data = Slot_Hack(Varlist_Slot(ctx, STD_PORT_DATA));
+        Stable* data = Stable_Slot_Hack(Varlist_Slot(ctx, STD_PORT_DATA));
         if (not Is_Blob(data))
             Init_Blob(data, Make_Binary(32000));
 
@@ -208,12 +206,10 @@ DECLARE_NATIVE(SERIAL_ACTOR)
         printf("\n");
       #endif
 
-        return COPY(port); }
+        return COPY_TO_OUT(port); }
 
       case SYM_WRITE: {
         INCLUDE_PARAMS_OF_WRITE;
-
-        UNUSED(PARAM(DESTINATION));
 
         if (ARG(SEEK) or ARG(APPEND) or ARG(LINES))
             panic (Error_Bad_Refines_Raw());
@@ -246,7 +242,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
         // !!! Incomplete reads need event loop interop, see [A] above
 
-        return COPY(port); }
+        return COPY_TO_OUT(port); }
 
       case SYM_CLOSE:
         if (serial->handle != nullptr) {  // !!! tolerate double closes?
@@ -256,7 +252,7 @@ DECLARE_NATIVE(SERIAL_ACTOR)
 
             assert(serial->handle == nullptr);
         }
-        return COPY(port);
+        return COPY_TO_OUT(port);
 
       default:
         break;
